@@ -1149,8 +1149,9 @@
         const frozenNow = p.frozen > 0;
         const assaultMult = p.assault > 0 ? 1.28 : 1;
         const comebackMult = p.comeback > 0 ? 1.15 : 1;
+        const finalTenMult = isFinalTen() ? 2 : 1;
         const biasMult = p.preferred ? 1.035 : 0.99;
-        const mult = frozenNow ? 1 : (p.boost > 0 ? 1.62 : 1) * assaultMult * comebackMult * biasMult;
+        const mult = frozenNow ? 1 : (p.boost > 0 ? 1.62 : 1) * assaultMult * comebackMult * finalTenMult * biasMult;
         p.x += p.vx * mult * dt;
         p.y += p.vy * mult * dt;
         p.angle += p.spin * dt;
@@ -1193,7 +1194,7 @@
         }
 
         const v = Math.hypot(p.vx, p.vy);
-        const target = (140 + state.speed * 24) * (p.boost > 0 ? 1.62 : 1) * comebackMult;
+        const target = (140 + state.speed * 24) * (p.boost > 0 ? 1.62 : 1) * comebackMult * finalTenMult;
         if (!frozenNow && (v < target * 0.75 || v > target * 1.35)) {
           const scale = target / Math.max(1, v);
           p.vx = p.vx * 0.98 + p.vx * scale * 0.02;
@@ -1398,7 +1399,12 @@
         offender.vx = 0;
         offender.vy = 0;
         state.announcement = {
-          text: `SECOND YELLOW: RED CARD FOR ${offender.team.name.toUpperCase()} ${attacker.team.name.toUpperCase()} ATTACKS`,
+          text: `X2 YELLOW CARD = RED CARD`,
+          parts: [
+            { text: "X2 YELLOW CARD", color: "#ffd400" },
+            { text: " = RED CARD", color: "#ff1748" }
+          ],
+          subtext: offender.team.name.toUpperCase(),
           color: "#ff1748",
           life: 1.55,
           maxLife: 1.55
@@ -2556,11 +2562,42 @@
         ctx.strokeStyle = "rgba(20,0,0,0.84)";
         ctx.shadowColor = state.announcement.color || "#ff1748";
         ctx.shadowBlur = 28;
-        wrapImpactText(state.announcement.text, 0, 0, 350, 30, true);
-        ctx.fillStyle = state.announcement.color || "#ffffff";
-        ctx.shadowBlur = 12;
-        wrapImpactText(state.announcement.text, 0, 0, 350, 30, false);
+        if (state.announcement.parts) {
+          drawSegmentAnnouncement(state.announcement.parts, 0, -9, true);
+          ctx.shadowBlur = 12;
+          drawSegmentAnnouncement(state.announcement.parts, 0, -9, false);
+          if (state.announcement.subtext) {
+            ctx.font = "900 16px Orbitron, Share Tech Mono, monospace";
+            ctx.fillStyle = "#ffffff";
+            ctx.shadowColor = "rgba(255,255,255,0.65)";
+            ctx.shadowBlur = 9;
+            ctx.fillText(state.announcement.subtext, 0, 26);
+          }
+        } else {
+          wrapImpactText(state.announcement.text, 0, 0, 350, 30, true);
+          ctx.fillStyle = state.announcement.color || "#ffffff";
+          ctx.shadowBlur = 12;
+          wrapImpactText(state.announcement.text, 0, 0, 350, 30, false);
+        }
         ctx.restore();
+      }
+
+      function drawSegmentAnnouncement(parts, x, y, stroke) {
+        ctx.font = "900 24px Orbitron, Share Tech Mono, monospace";
+        const total = parts.reduce((sum, part) => sum + ctx.measureText(part.text).width, 0);
+        let cursor = x - total / 2;
+        parts.forEach((part) => {
+          const width = ctx.measureText(part.text).width;
+          if (stroke) {
+            ctx.strokeStyle = "rgba(20,0,0,0.88)";
+            ctx.strokeText(part.text, cursor, y);
+          } else {
+            ctx.fillStyle = part.color;
+            ctx.shadowColor = part.color;
+            ctx.fillText(part.text, cursor, y);
+          }
+          cursor += width;
+        });
       }
 
       function wrapImpactText(text, x, y, maxWidth, lineHeight, stroke) {
