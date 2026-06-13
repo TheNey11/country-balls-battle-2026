@@ -304,7 +304,20 @@
     }
 
     .video-controls {
-      grid-template-columns: 1fr;
+      grid-template-columns: 1.18fr 0.82fr 0.92fr;
+      gap: 8px;
+    }
+
+    .video-controls button {
+      font-size: 10px;
+    }
+
+    .video-controls button.primary {
+      height: 38px;
+      border-color: rgba(255, 241, 102, 0.76);
+      background: linear-gradient(180deg, #fff26a 0%, #ffd447 52%, #ff9f2c 100%);
+      color: #03121b;
+      box-shadow: 0 0 22px rgba(255, 209, 69, 0.26), inset 0 2px 10px rgba(255, 255, 255, 0.38);
     }
 
     .end-panel {
@@ -409,11 +422,12 @@
 
       <div id="endPanel" class="end-panel" hidden>
         <div id="winnerText" class="winner">Ganador</div>
-        <button id="againBtn" class="primary" type="button">Revancha</button>
       </div>
 
       <div id="videoControls" class="game-controls video-controls" hidden>
         <button id="downloadVideoBtn" type="button" disabled>Preparando video</button>
+        <button id="endMenuBtn" type="button">Menu</button>
+        <button id="againBtn" class="primary" type="button">Revancha</button>
       </div>
     </section>
   </main>
@@ -441,6 +455,7 @@
       const bgFile = document.getElementById("bgFile");
       const restartBtn = document.getElementById("restartBtn");
       const menuBtn = document.getElementById("menuBtn");
+      const endMenuBtn = document.getElementById("endMenuBtn");
       const againBtn = document.getElementById("againBtn");
       const downloadVideoBtn = document.getElementById("downloadVideoBtn");
       const durationButtons = Array.from(document.querySelectorAll("[data-duration]"));
@@ -562,6 +577,7 @@
           canvas: null,
           ctx: null,
           mediaRecorder: null,
+          stream: null,
           chunks: [],
           url: "",
           mime: "",
@@ -991,6 +1007,7 @@
           recorderState.mediaRecorder.onstop = null;
           try { recorderState.mediaRecorder.stop(); } catch (error) {}
         }
+        stopRecorderStream();
         if (recorderState.url) URL.revokeObjectURL(recorderState.url);
         recorderState.url = "";
         recorderState.chunks = [];
@@ -1010,19 +1027,21 @@
           }
           return;
         }
-        if (!recorderState.canvas) {
+        const profile = getRecorderProfile();
+        if (!recorderState.canvas || recorderState.canvas.width !== profile.width || recorderState.canvas.height !== profile.height) {
           recorderState.canvas = document.createElement("canvas");
-          recorderState.canvas.width = 1080;
-          recorderState.canvas.height = 1920;
+          recorderState.canvas.width = profile.width;
+          recorderState.canvas.height = profile.height;
           recorderState.ctx = recorderState.canvas.getContext("2d", { alpha: false });
         }
         copyFrameToRecorder();
-        const videoStream = recorderState.canvas.captureStream(60);
+        const videoStream = recorderState.canvas.captureStream(profile.fps);
         const audioTracks = state.audio.recorderDest ? state.audio.recorderDest.stream.getAudioTracks() : [];
         audioTracks.forEach((track) => videoStream.addTrack(track));
+        recorderState.stream = videoStream;
         const mime = pickRecorderMime();
         try {
-          recorderState.mediaRecorder = new MediaRecorder(videoStream, mime ? { mimeType: mime, videoBitsPerSecond: 9000000 } : { videoBitsPerSecond: 9000000 });
+          recorderState.mediaRecorder = new MediaRecorder(videoStream, mime ? { mimeType: mime, videoBitsPerSecond: profile.bitrate } : { videoBitsPerSecond: profile.bitrate });
         } catch (error) {
           recorderState.supported = false;
           downloadVideoBtn.textContent = "Video no soportado";
@@ -1041,6 +1060,7 @@
           recorderState.stopTimer = 0;
           recorderState.active = false;
           recorderState.mediaRecorder = null;
+          stopRecorderStream();
           if (!recorderState.chunks.length) {
             downloadVideoBtn.textContent = "Sin video";
             videoControls.hidden = false;
@@ -1052,8 +1072,7 @@
           downloadVideoBtn.textContent = "Descargar video HD";
           videoControls.hidden = false;
         };
-        if (recorderState.mime.includes("mp4")) recorderState.mediaRecorder.start();
-        else recorderState.mediaRecorder.start(500);
+        recorderState.mediaRecorder.start(profile.timeslice);
       }
 
       function stopMatchRecording(expectedSessionId = state.recorder.sessionId) {
@@ -1063,9 +1082,7 @@
           videoControls.hidden = false;
           downloadVideoBtn.disabled = true;
           downloadVideoBtn.textContent = "Procesando video";
-          if (!state.recorder.mime.includes("mp4")) {
-            try { recorder.requestData(); } catch (error) {}
-          }
+          try { recorder.requestData(); } catch (error) {}
           try { recorder.stop(); } catch (error) {}
         } else if (!state.recorder.supported) {
           videoControls.hidden = false;
@@ -1077,6 +1094,24 @@
       function copyFrameToRecorder() {
         if (!state.recorder.canvas || !state.recorder.ctx) return;
         state.recorder.ctx.drawImage(canvas, 0, 0, state.recorder.canvas.width, state.recorder.canvas.height);
+      }
+
+      function stopRecorderStream() {
+        const stream = state.recorder.stream;
+        if (!stream) return;
+        stream.getVideoTracks().forEach((track) => {
+          try { track.stop(); } catch (error) {}
+        });
+        state.recorder.stream = null;
+      }
+
+      function getRecorderProfile() {
+        const ua = navigator.userAgent || "";
+        const appleTouch = /iP(hone|ad|od)/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        if (appleTouch) {
+          return { width: 720, height: 1280, fps: 30, bitrate: 4200000, timeslice: 1000 };
+        }
+        return { width: 1080, height: 1920, fps: 30, bitrate: 7200000, timeslice: 1000 };
       }
 
       function pickRecorderMime() {
@@ -1496,7 +1531,7 @@
         state.mode = "over";
         state.winner = winner;
         winnerText.textContent = `${winner.team.name} gana`;
-        endPanel.hidden = false;
+        endPanel.hidden = true;
         gameControls.hidden = true;
         videoControls.hidden = true;
         state.audio.stopAmbience();
@@ -2827,7 +2862,7 @@
       restartBtn.addEventListener("click", startGame);
       againBtn.addEventListener("click", startGame);
       downloadVideoBtn.addEventListener("click", downloadMatchVideo);
-      menuBtn.addEventListener("click", () => {
+      function goToMenu() {
         state.mode = "menu";
         state.audio.stopAmbience();
         resetRecordingUI();
@@ -2835,7 +2870,10 @@
         gameControls.hidden = true;
         endPanel.hidden = true;
         videoControls.hidden = true;
-      });
+      }
+
+      menuBtn.addEventListener("click", goToMenu);
+      endMenuBtn.addEventListener("click", goToMenu);
       speedInput.addEventListener("input", () => {
         updateSpeedLabel();
       });
