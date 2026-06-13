@@ -1149,7 +1149,7 @@
         const frozenNow = p.frozen > 0;
         const assaultMult = p.assault > 0 ? 1.28 : 1;
         const comebackMult = p.comeback > 0 ? 1.15 : 1;
-        const finalTenMult = isFinalTen() ? 2 : 1;
+        const finalTenMult = isFinalTen() ? 1.5 : 1;
         const biasMult = p.preferred ? 1.035 : 0.99;
         const mult = frozenNow ? 1 : (p.boost > 0 ? 1.62 : 1) * assaultMult * comebackMult * finalTenMult * biasMult;
         p.x += p.vx * mult * dt;
@@ -2583,6 +2583,9 @@
       }
 
       function drawSegmentAnnouncement(parts, x, y, stroke) {
+        ctx.save();
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
         ctx.font = "900 24px Orbitron, Share Tech Mono, monospace";
         const total = parts.reduce((sum, part) => sum + ctx.measureText(part.text).width, 0);
         let cursor = x - total / 2;
@@ -2598,6 +2601,7 @@
           }
           cursor += width;
         });
+        ctx.restore();
       }
 
       function wrapImpactText(text, x, y, maxWidth, lineHeight, stroke) {
