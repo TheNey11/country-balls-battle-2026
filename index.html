@@ -1013,7 +1013,8 @@
           downloadVideoBtn.disabled = false;
           downloadVideoBtn.textContent = "Descargar video HD";
         };
-        recorderState.mediaRecorder.start(500);
+        if (recorderState.mime.includes("mp4")) recorderState.mediaRecorder.start();
+        else recorderState.mediaRecorder.start(500);
       }
 
       function stopMatchRecording() {
@@ -1021,7 +1022,9 @@
         if (recorder && state.recorder.active && recorder.state !== "inactive") {
           downloadVideoBtn.disabled = true;
           downloadVideoBtn.textContent = "Procesando video";
-          try { recorder.requestData(); } catch (error) {}
+          if (!state.recorder.mime.includes("mp4")) {
+            try { recorder.requestData(); } catch (error) {}
+          }
           try { recorder.stop(); } catch (error) {}
         } else if (!state.recorder.supported) {
           downloadVideoBtn.disabled = true;
@@ -1037,6 +1040,8 @@
       function pickRecorderMime() {
         if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return "";
         const options = [
+          "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+          "video/mp4;codecs=avc1.4D401E,mp4a.40.2",
           "video/mp4;codecs=h264,aac",
           "video/mp4",
           "video/webm;codecs=vp9,opus",
