@@ -586,7 +586,7 @@
             }
           }
           if (this.ctx.state === "suspended") await this.ctx.resume();
-          this.loadWhistle();
+          await this.loadWhistle();
         }
 
         whistle() {
@@ -612,16 +612,20 @@
         }
 
         loadWhistle() {
-          if (!this.ctx || this.whistleBuffer || this.whistleLoading) return;
+          if (!this.ctx || this.whistleBuffer) return Promise.resolve(this.whistleBuffer);
+          if (this.whistleLoading) return this.whistleLoading;
           this.whistleLoading = fetch(WHISTLE_SRC)
             .then((response) => response.arrayBuffer())
             .then((buffer) => this.ctx.decodeAudioData(buffer))
             .then((decoded) => {
               this.whistleBuffer = decoded;
+              return decoded;
             })
             .catch(() => {
               this.whistleBuffer = null;
+              return null;
             });
+          return this.whistleLoading;
         }
 
         crowd() {
