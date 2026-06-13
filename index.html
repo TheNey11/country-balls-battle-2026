@@ -70,6 +70,7 @@
 
     .menu,
     .game-controls,
+    .video-controls,
     .end-panel {
       pointer-events: auto;
     }
@@ -125,6 +126,7 @@
 
     .menu[hidden],
     .game-controls[hidden],
+    .video-controls[hidden],
     .end-panel[hidden] {
       display: none;
     }
@@ -301,6 +303,10 @@
       backdrop-filter: blur(6px);
     }
 
+    .video-controls {
+      grid-template-columns: 1fr;
+    }
+
     .end-panel {
       position: absolute;
       left: 18px;
@@ -403,8 +409,11 @@
 
       <div id="endPanel" class="end-panel" hidden>
         <div id="winnerText" class="winner">Ganador</div>
-        <button id="downloadVideoBtn" type="button" disabled>Preparando video</button>
         <button id="againBtn" class="primary" type="button">Revancha</button>
+      </div>
+
+      <div id="videoControls" class="game-controls video-controls" hidden>
+        <button id="downloadVideoBtn" type="button" disabled>Preparando video</button>
       </div>
     </section>
   </main>
@@ -417,6 +426,7 @@
       const ctx = canvas.getContext("2d", { alpha: false });
       const menu = document.getElementById("menu");
       const gameControls = document.getElementById("gameControls");
+      const videoControls = document.getElementById("videoControls");
       const endPanel = document.getElementById("endPanel");
       const winnerText = document.getElementById("winnerText");
       const teamASelect = document.getElementById("teamA");
@@ -556,7 +566,9 @@
           url: "",
           mime: "",
           active: false,
-          supported: false
+          supported: false,
+          sessionId: 0,
+          stopTimer: 0
         },
         winner: null,
         audio: null
@@ -897,9 +909,12 @@
 
         menu.hidden = true;
         endPanel.hidden = true;
+        videoControls.hidden = true;
         gameControls.hidden = false;
         resetRecordingUI();
+        const recordingSession = state.recorder.sessionId;
         state.audio.ensure().then(() => {
+          if (recordingSession !== state.recorder.sessionId || state.mode !== "playing") return;
           state.audio.whistle();
           if (state.crowdAudio) state.audio.startAmbience();
           startMatchRecording();
@@ -965,9 +980,23 @@
       }
 
       function resetRecordingUI() {
-        if (state.recorder.url) URL.revokeObjectURL(state.recorder.url);
-        state.recorder.url = "";
-        state.recorder.chunks = [];
+        const recorderState = state.recorder;
+        recorderState.sessionId += 1;
+        if (recorderState.stopTimer) {
+          clearTimeout(recorderState.stopTimer);
+          recorderState.stopTimer = 0;
+        }
+        if (recorderState.mediaRecorder && recorderState.mediaRecorder.state !== "inactive") {
+          recorderState.mediaRecorder.ondataavailable = null;
+          recorderState.mediaRecorder.onstop = null;
+          try { recorderState.mediaRecorder.stop(); } catch (error) {}
+        }
+        if (recorderState.url) URL.revokeObjectURL(recorderState.url);
+        recorderState.url = "";
+        recorderState.chunks = [];
+        recorderState.mediaRecorder = null;
+        recorderState.active = false;
+        videoControls.hidden = true;
         downloadVideoBtn.disabled = true;
         downloadVideoBtn.textContent = "Grabando batalla";
       }
@@ -976,7 +1005,9 @@
         const recorderState = state.recorder;
         recorderState.supported = !!(window.MediaRecorder && HTMLCanvasElement.prototype.captureStream);
         if (!recorderState.supported || recorderState.active) {
-          if (!recorderState.supported) downloadVideoBtn.textContent = "Video no soportado";
+          if (!recorderState.supported) {
+            downloadVideoBtn.textContent = "Video no soportado";
+          }
           return;
         }
         if (!recorderState.canvas) {
@@ -993,33 +1024,43 @@
         try {
           recorderState.mediaRecorder = new MediaRecorder(videoStream, mime ? { mimeType: mime, videoBitsPerSecond: 9000000 } : { videoBitsPerSecond: 9000000 });
         } catch (error) {
+          recorderState.supported = false;
           downloadVideoBtn.textContent = "Video no soportado";
           return;
         }
+        const sessionId = recorderState.sessionId;
         recorderState.mime = recorderState.mediaRecorder.mimeType || mime || "video/webm";
         recorderState.chunks = [];
         recorderState.active = true;
         recorderState.mediaRecorder.ondataavailable = (event) => {
+          if (sessionId !== recorderState.sessionId) return;
           if (event.data && event.data.size) recorderState.chunks.push(event.data);
         };
         recorderState.mediaRecorder.onstop = () => {
+          if (sessionId !== recorderState.sessionId) return;
+          recorderState.stopTimer = 0;
           recorderState.active = false;
+          recorderState.mediaRecorder = null;
           if (!recorderState.chunks.length) {
             downloadVideoBtn.textContent = "Sin video";
+            videoControls.hidden = false;
             return;
           }
           const blob = new Blob(recorderState.chunks, { type: recorderState.mime });
           recorderState.url = URL.createObjectURL(blob);
           downloadVideoBtn.disabled = false;
           downloadVideoBtn.textContent = "Descargar video HD";
+          videoControls.hidden = false;
         };
         if (recorderState.mime.includes("mp4")) recorderState.mediaRecorder.start();
         else recorderState.mediaRecorder.start(500);
       }
 
-      function stopMatchRecording() {
+      function stopMatchRecording(expectedSessionId = state.recorder.sessionId) {
+        if (expectedSessionId !== state.recorder.sessionId) return;
         const recorder = state.recorder.mediaRecorder;
         if (recorder && state.recorder.active && recorder.state !== "inactive") {
+          videoControls.hidden = false;
           downloadVideoBtn.disabled = true;
           downloadVideoBtn.textContent = "Procesando video";
           if (!state.recorder.mime.includes("mp4")) {
@@ -1027,6 +1068,7 @@
           }
           try { recorder.stop(); } catch (error) {}
         } else if (!state.recorder.supported) {
+          videoControls.hidden = false;
           downloadVideoBtn.disabled = true;
           downloadVideoBtn.textContent = "Video no soportado";
         }
@@ -1456,10 +1498,12 @@
         winnerText.textContent = `${winner.team.name} gana`;
         endPanel.hidden = false;
         gameControls.hidden = true;
+        videoControls.hidden = true;
         state.audio.stopAmbience();
         state.audio.whistle();
         spawnConfetti(winner, 180);
-        setTimeout(stopMatchRecording, 1100);
+        const sessionId = state.recorder.sessionId;
+        state.recorder.stopTimer = setTimeout(() => stopMatchRecording(sessionId), 1900);
       }
 
       function draw(time) {
@@ -1473,6 +1517,7 @@
         drawParticles(state.particles);
         drawParticles(state.confetti);
         state.lifeFx.forEach(drawParticles);
+        drawWinnerBanner(time);
         drawAnnouncement();
         drawVignette();
       }
@@ -2553,6 +2598,56 @@
         ctx.fillRect(0, 0, W, H);
       }
 
+      function drawWinnerBanner(time) {
+        if (state.mode !== "over" || !state.winner) return;
+        const winner = state.winner;
+        const pulse = (Math.sin(time * 5.8) + 1) / 2;
+        const x = SAFE.x + 20;
+        const y = SAFE.y + SAFE.h * 0.39;
+        const w = SAFE.w - 40;
+        const h = 112;
+        ctx.save();
+        ctx.shadowColor = winner.team.colors[0] || "#ffd75f";
+        ctx.shadowBlur = 26 + pulse * 18;
+        roundRect(x, y, w, h, 16);
+        const bg = ctx.createLinearGradient(x, y, x + w, y + h);
+        bg.addColorStop(0, "rgba(3, 11, 20, 0.92)");
+        bg.addColorStop(0.52, "rgba(16, 24, 31, 0.94)");
+        bg.addColorStop(1, "rgba(54, 34, 6, 0.92)");
+        ctx.fillStyle = bg;
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = `rgba(255, 219, 96, ${0.72 + pulse * 0.22})`;
+        ctx.stroke();
+
+        ctx.shadowBlur = 20 + pulse * 12;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = "900 20px Orbitron, Share Tech Mono, monospace";
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = "rgba(0,0,0,0.72)";
+        ctx.fillStyle = "#fff2a6";
+        ctx.strokeText("WINNER", SAFE.x + SAFE.w / 2, y + 28);
+        ctx.fillText("WINNER", SAFE.x + SAFE.w / 2, y + 28);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.shadowColor = "#ffd75f";
+        const name = winner.team.name.toUpperCase();
+        let nameSize = 34;
+        do {
+          ctx.font = `900 ${nameSize}px Orbitron, Share Tech Mono, monospace`;
+          nameSize -= 2;
+        } while (ctx.measureText(name).width > w - 34 && nameSize >= 20);
+        ctx.strokeText(name, SAFE.x + SAFE.w / 2, y + 68);
+        ctx.fillText(name, SAFE.x + SAFE.w / 2, y + 68);
+
+        ctx.font = "900 14px Orbitron, Share Tech Mono, monospace";
+        ctx.fillStyle = "#88ffe4";
+        ctx.shadowBlur = 12;
+        ctx.fillText("COUNTRY BALLS BATTLE 2026", SAFE.x + SAFE.w / 2, y + 95);
+        ctx.restore();
+      }
+
       function drawAnnouncement() {
         if (!state.announcement) return;
         const alpha = Math.max(0, state.announcement.life / state.announcement.maxLife);
@@ -2735,9 +2830,11 @@
       menuBtn.addEventListener("click", () => {
         state.mode = "menu";
         state.audio.stopAmbience();
+        resetRecordingUI();
         menu.hidden = false;
         gameControls.hidden = true;
         endPanel.hidden = true;
+        videoControls.hidden = true;
       });
       speedInput.addEventListener("input", () => {
         updateSpeedLabel();
