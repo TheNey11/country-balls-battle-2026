@@ -608,6 +608,8 @@
         aggressiveOvertime: false,
         tensionPulse: 0,
         finalBlow: false,
+        eliminationOrder: [],
+        finalRanking: [],
         recorder: {
           canvas: null,
           ctx: null,
@@ -1025,6 +1027,8 @@
         state.aggressiveOvertime = false;
         state.tensionPulse = 0;
         state.finalBlow = false;
+        state.eliminationOrder = [];
+        state.finalRanking = [];
         state.winner = null;
         state.mode = "playing";
         state.players = makePlayers(selected);
@@ -1349,6 +1353,7 @@
       }
 
       function getNextSpawnDelay() {
+        if (isFinalTen()) return state.teamCount > 2 ? random(1.05, 1.35) : random(1.25, 1.55);
         if (state.aggressiveOvertime || state.deathmatch) return random(1.15, 1.5);
         return random(2.5, 3.5);
       }
@@ -1507,6 +1512,7 @@
       function eliminatePlayer(target, attacker) {
         if (target.eliminated) return;
         target.eliminated = true;
+        if (!state.eliminationOrder.includes(target)) state.eliminationOrder.push(target);
         target.vx = 0;
         target.vy = 0;
         target.saw = 0;
@@ -1572,7 +1578,8 @@
 
       function spawnItem() {
         const type = chooseItemType();
-        const scale = state.aggressiveOvertime && (type === "saw" || type === "redCard" || type === "yellowCard") ? 1.42 : 1;
+        const isWeapon = type === "saw" || type === "redCard" || type === "yellowCard";
+        const scale = (state.aggressiveOvertime || isFinalTen()) && isWeapon ? 1.42 : 1;
         const live = activePlayers();
         const favored = live.find((player) => player.preferred);
         const comebackPlayer = live.find((player) => player.comeback > 0);
@@ -1586,12 +1593,26 @@
           r: ITEM_SIZE * scale,
           t: 0
         });
-        if (state.items.length > 4) state.items.shift();
+        if (state.items.length > (state.teamCount > 2 ? 5 : 4)) state.items.shift();
       }
 
       function chooseItemType() {
         const comebackPlayer = activePlayers().find((player) => player.comeback > 0);
         const roll = Math.random();
+        if (isFinalTen()) {
+          if (state.teamCount > 2) {
+            if (roll < 0.5) return "saw";
+            if (roll < 0.74) return "redCard";
+            if (roll < 0.92) return "yellowCard";
+            if (roll < 0.96) return "shield";
+            return "boost";
+          }
+          if (roll < 0.42) return "saw";
+          if (roll < 0.66) return "redCard";
+          if (roll < 0.84) return "yellowCard";
+          if (roll < 0.9) return "shield";
+          return "boost";
+        }
         if (state.aggressiveOvertime) {
           if (roll < 0.52) return "saw";
           if (roll < 0.78) return "redCard";
@@ -1605,6 +1626,14 @@
           return "boost";
         }
         if (comebackPlayer && roll < 0.24) return Math.random() < 0.42 ? "heart" : "shield";
+        if (state.teamCount > 2) {
+          if (roll < 0.38) return "saw";
+          if (roll < 0.55) return "redCard";
+          if (roll < 0.7) return "yellowCard";
+          if (roll < 0.81) return "shield";
+          if (roll < 0.87) return "heart";
+          return "boost";
+        }
         if (roll < 0.3) return "saw";
         if (roll < 0.48) return "redCard";
         if (roll < 0.64) return "yellowCard";
@@ -1660,11 +1689,8 @@
       }
 
       function activateSecondYellow(offender) {
-        const attacker = chooseRival(offender);
-        if (!attacker) return;
-        attacker.assault = 2.5;
-        attacker.assaultHitCd = 0;
-        attacker.boost = Math.max(attacker.boost, 2.5);
+        const attackers = armRivalsForPenalty(offender, 2.5);
+        if (!attackers.length) return;
         offender.frozen = 2.5;
         offender.vx = 0;
         offender.vy = 0;
@@ -1685,23 +1711,31 @@
         if (state.crowdAudio) state.audio.crowd();
       }
 
-      function activateRedCard(attacker) {
-        const rival = chooseRival(attacker);
-        if (!rival) return;
-        attacker.assault = state.redDuration;
-        attacker.assaultHitCd = 0;
-        attacker.boost = Math.max(attacker.boost, state.redDuration);
-        rival.frozen = state.redDuration;
-        rival.vx = 0;
-        rival.vy = 0;
+      function activateRedCard(offender) {
+        const attackers = armRivalsForPenalty(offender, state.redDuration);
+        if (!attackers.length) return;
+        offender.redMark = state.redDuration;
+        offender.frozen = state.redDuration;
+        offender.vx = 0;
+        offender.vy = 0;
         state.announcement = {
-          text: `RED CARD FOR ${attacker.team.name.toUpperCase()}`,
+          text: `RED CARD FOR ${offender.team.name.toUpperCase()}`,
           color: "#ff1748",
           life: 1,
           maxLife: 1
         };
-        addSparks(rival.x, rival.y, ["#ff1748", "#ffffff", "#ffd75f"], 34, 260);
+        addSparks(offender.x, offender.y, ["#ff1748", "#ffffff", "#ffd75f"], 42, 290);
         if (state.crowdAudio) state.audio.crowd();
+      }
+
+      function armRivalsForPenalty(offender, duration) {
+        const attackers = activePlayers().filter((player) => player !== offender);
+        attackers.forEach((attacker) => {
+          attacker.assault = Math.max(attacker.assault, duration);
+          attacker.assaultHitCd = 0;
+          attacker.boost = Math.max(attacker.boost, Math.min(duration, 3));
+        });
+        return attackers;
       }
 
       function chooseRival(player) {
@@ -1718,6 +1752,7 @@
         if (state.mode === "over") return;
         winner = winner || chooseLikelyWinner(activePlayers()) || state.players.find((p) => p.lives > 0) || state.players[0];
         if (!winner) return;
+        state.finalRanking = buildFinalRanking(winner);
         state.mode = "over";
         state.winner = winner;
         winnerText.textContent = `${winner.team.name} gana`;
@@ -1729,6 +1764,26 @@
         spawnConfetti(winner, 180);
         const sessionId = state.recorder.sessionId;
         state.recorder.stopTimer = setTimeout(() => stopMatchRecording(sessionId), 1900);
+      }
+
+      function buildFinalRanking(winner) {
+        const ranking = [winner];
+        const activeRest = activePlayers()
+          .filter((player) => player !== winner)
+          .sort((a, b) => scorePlayer(b) - scorePlayer(a));
+        const fallen = state.eliminationOrder
+          .filter((player) => player !== winner)
+          .slice()
+          .reverse();
+        state.players
+          .filter((player) => player !== winner && !activeRest.includes(player) && !fallen.includes(player))
+          .sort((a, b) => scorePlayer(b) - scorePlayer(a))
+          .forEach((player) => fallen.unshift(player));
+        activeRest.forEach((player) => ranking.push(player));
+        fallen.forEach((player) => {
+          if (!ranking.includes(player)) ranking.push(player);
+        });
+        return ranking.slice(0, state.players.length);
       }
 
       function draw(time) {
@@ -2888,6 +2943,10 @@
 
       function drawWinnerBanner(time) {
         if (state.mode !== "over" || !state.winner) return;
+        if (state.teamCount > 2) {
+          drawRankingBanner(time);
+          return;
+        }
         const winner = state.winner;
         const pulse = (Math.sin(time * 5.8) + 1) / 2;
         const x = SAFE.x + 20;
@@ -2933,6 +2992,97 @@
         ctx.fillStyle = "#88ffe4";
         ctx.shadowBlur = 12;
         ctx.fillText("COUNTRY BALLS BATTLE 2026", SAFE.x + SAFE.w / 2, y + 95);
+        ctx.restore();
+      }
+
+      function drawRankingBanner(time) {
+        const ranking = (state.finalRanking && state.finalRanking.length ? state.finalRanking : buildFinalRanking(state.winner)).slice(0, 4);
+        const pulse = (Math.sin(time * 5.8) + 1) / 2;
+        const x = SAFE.x + 18;
+        const y = SAFE.y + SAFE.h * 0.31;
+        const w = SAFE.w - 36;
+        const h = 212;
+        const rowH = 36;
+        const podium = [
+          { place: "1", label: "CHAMPION", color: "#ffd75f", glow: "rgba(255,215,95,0.9)" },
+          { place: "2", label: "RUNNER UP", color: "#d9e4ef", glow: "rgba(217,228,239,0.82)" },
+          { place: "3", label: "THIRD PLACE", color: "#d7934b", glow: "rgba(215,147,75,0.82)" },
+          { place: "4", label: "ELIMINATED", color: "#ff315d", glow: "rgba(255,49,93,0.84)" }
+        ];
+
+        ctx.save();
+        ctx.shadowColor = "#ffd75f";
+        ctx.shadowBlur = 24 + pulse * 14;
+        roundRect(x, y, w, h, 16);
+        const bg = ctx.createLinearGradient(x, y, x + w, y + h);
+        bg.addColorStop(0, "rgba(3, 11, 20, 0.94)");
+        bg.addColorStop(0.5, "rgba(4, 32, 45, 0.94)");
+        bg.addColorStop(1, "rgba(45, 25, 7, 0.94)");
+        ctx.fillStyle = bg;
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = `rgba(255, 219, 96, ${0.7 + pulse * 0.22})`;
+        ctx.stroke();
+
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = "900 18px Orbitron, Share Tech Mono, monospace";
+        ctx.lineWidth = 5;
+        ctx.strokeStyle = "rgba(0,0,0,0.72)";
+        ctx.fillStyle = "#fff2a6";
+        ctx.shadowBlur = 18;
+        ctx.strokeText("WORLD CUP FINAL TABLE", SAFE.x + SAFE.w / 2, y + 25);
+        ctx.fillText("WORLD CUP FINAL TABLE", SAFE.x + SAFE.w / 2, y + 25);
+
+        ranking.forEach((player, index) => {
+          const meta = podium[index] || podium[podium.length - 1];
+          const ry = y + 48 + index * rowH;
+          const rx = x + 13;
+          const rw = w - 26;
+          ctx.shadowColor = meta.glow;
+          ctx.shadowBlur = index === 0 ? 16 + pulse * 9 : 9;
+          roundRect(rx, ry, rw, rowH - 5, 9);
+          const rg = ctx.createLinearGradient(rx, ry, rx + rw, ry + rowH);
+          rg.addColorStop(0, hexToRgba(meta.color, index === 0 ? 0.38 : 0.22));
+          rg.addColorStop(1, "rgba(2, 11, 18, 0.78)");
+          ctx.fillStyle = rg;
+          ctx.fill();
+          ctx.lineWidth = index === 0 ? 2.4 : 1.4;
+          ctx.strokeStyle = hexToRgba(meta.color, index === 0 ? 0.96 : 0.72);
+          ctx.stroke();
+
+          ctx.shadowBlur = 0;
+          ctx.textAlign = "center";
+          ctx.font = "900 18px Orbitron, Share Tech Mono, monospace";
+          ctx.fillStyle = meta.color;
+          ctx.fillText(meta.place, rx + 19, ry + 16);
+          drawFlagBall(player.team, rx + 48, ry + 15.5, 12);
+
+          ctx.textAlign = "left";
+          const teamName = player.team.name.toUpperCase();
+          let nameSize = 17;
+          do {
+            ctx.font = `900 ${nameSize}px Orbitron, Share Tech Mono, monospace`;
+            nameSize -= 1;
+          } while (ctx.measureText(teamName).width > 178 && nameSize >= 11);
+          ctx.fillStyle = "#ffffff";
+          ctx.shadowColor = "rgba(255,255,255,0.45)";
+          ctx.shadowBlur = index === 0 ? 8 : 3;
+          ctx.fillText(teamName, rx + 66, ry + 14);
+
+          ctx.textAlign = "right";
+          ctx.font = "900 10px Orbitron, Share Tech Mono, monospace";
+          ctx.fillStyle = meta.color;
+          ctx.shadowBlur = 0;
+          ctx.fillText(meta.label, rx + rw - 10, ry + 17);
+        });
+
+        ctx.font = "900 11px Orbitron, Share Tech Mono, monospace";
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#88ffe4";
+        ctx.shadowColor = "rgba(136,255,228,0.65)";
+        ctx.shadowBlur = 10;
+        ctx.fillText("COUNTRY BALLS BATTLE 2026", SAFE.x + SAFE.w / 2, y + h - 16);
         ctx.restore();
       }
 
@@ -3099,6 +3249,11 @@
         const clean = hex.replace("#", "");
         const value = parseInt(clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean, 16);
         return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
+      }
+
+      function hexToRgba(hex, alpha) {
+        const color = hexToRgb(hex);
+        return `rgba(${color.r},${color.g},${color.b},${alpha})`;
       }
 
       function loop(now) {
