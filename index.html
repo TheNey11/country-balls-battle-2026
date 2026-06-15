@@ -1286,6 +1286,14 @@
           const strongestRivalLives = Math.max(...live.filter((rival) => rival !== p).map((rival) => rival.lives));
           if (p.lives === 1 && strongestRivalLives >= 3) p.comeback = Math.max(p.comeback, 10);
         });
+        const preferred = preferredPlayer();
+        if (preferred && state.teamCount > 2) {
+          const weakestLife = Math.min(...live.map((player) => player.lives));
+          const strongestLife = Math.max(...live.map((player) => player.lives));
+          if (preferred.lives === weakestLife && strongestLife > preferred.lives) {
+            preferred.comeback = Math.max(preferred.comeback, 2.4);
+          }
+        }
 
         const shouldDeathmatch = live.length === 2 && live.every((p) => p.lives === 1) && remaining <= 25;
         if (shouldDeathmatch && !state.deathmatch) {
@@ -1352,6 +1360,11 @@
         return state.players.filter((p) => !p.eliminated && p.lives > 0);
       }
 
+      function preferredPlayer() {
+        if (!state.preferredWinner) return null;
+        return activePlayers().find((player) => player.team.id === state.preferredWinner) || null;
+      }
+
       function getNextSpawnDelay() {
         if (isFinalTen()) return state.teamCount > 2 ? random(1.05, 1.35) : random(1.25, 1.55);
         if (state.aggressiveOvertime || state.deathmatch) return random(1.15, 1.5);
@@ -1372,7 +1385,7 @@
         const assaultMult = p.assault > 0 ? 1.28 : 1;
         const comebackMult = p.comeback > 0 ? 1.15 : 1;
         const finalTenMult = isFinalTen() ? 1.5 : 1;
-        const biasMult = p.preferred ? 1.035 : 0.99;
+        const biasMult = p.preferred ? (state.teamCount > 2 ? 1.045 : 1.035) : 0.99;
         const mult = frozenNow ? 1 : (p.boost > 0 ? 1.62 : 1) * assaultMult * comebackMult * finalTenMult * biasMult;
         p.x += p.vx * mult * dt;
         p.y += p.vy * mult * dt;
@@ -1416,7 +1429,8 @@
         }
 
         const v = Math.hypot(p.vx, p.vy);
-        const target = (140 + state.speed * 24) * (p.boost > 0 ? 1.62 : 1) * comebackMult * finalTenMult;
+        const preferredTarget = p.preferred && state.teamCount > 2 ? 1.025 : 1;
+        const target = (140 + state.speed * 24) * (p.boost > 0 ? 1.62 : 1) * comebackMult * finalTenMult * preferredTarget;
         if (!frozenNow && (v < target * 0.75 || v > target * 1.35)) {
           const scale = target / Math.max(1, v);
           p.vx = p.vx * 0.98 + p.vx * scale * 0.02;
@@ -1577,28 +1591,62 @@
       }
 
       function spawnItem() {
-        const type = chooseItemType();
-        const isWeapon = type === "saw" || type === "redCard" || type === "yellowCard";
-        const scale = (state.aggressiveOvertime || isFinalTen()) && isWeapon ? 1.42 : 1;
         const live = activePlayers();
         const favored = live.find((player) => player.preferred);
-        const comebackPlayer = live.find((player) => player.comeback > 0);
-        const nearComeback = comebackPlayer && Math.random() < 0.34;
-        const nearFavored = !nearComeback && favored && Math.random() < 0.38;
-        const anchor = nearComeback ? comebackPlayer : nearFavored ? favored : null;
+        const comebackPlayer = live.find((player) => player.comeback > 0 && !player.preferred);
+        const anchorInfo = chooseItemAnchor(live, favored, comebackPlayer);
+        const type = chooseItemType(anchorInfo.role, anchorInfo.player);
+        const isWeapon = type === "saw" || type === "redCard" || type === "yellowCard";
+        const scale = (state.aggressiveOvertime || isFinalTen()) && isWeapon ? 1.42 : 1;
+        const anchor = anchorInfo.player;
         state.items.push({
           type,
-          x: anchor ? clamp(anchor.x + random(-78, 78), FIELD.x + 48, FIELD.x + FIELD.w - 48) : random(FIELD.x + 48, FIELD.x + FIELD.w - 48),
-          y: anchor ? clamp(anchor.y + random(-88, 88), FIELD.y + 58, FIELD.y + FIELD.h - 58) : random(FIELD.y + 58, FIELD.y + FIELD.h - 58),
+          x: anchor ? clamp(anchor.x + random(-86, 86), FIELD.x + 48, FIELD.x + FIELD.w - 48) : random(FIELD.x + 48, FIELD.x + FIELD.w - 48),
+          y: anchor ? clamp(anchor.y + random(-94, 94), FIELD.y + 58, FIELD.y + FIELD.h - 58) : random(FIELD.y + 58, FIELD.y + FIELD.h - 58),
           r: ITEM_SIZE * scale,
           t: 0
         });
         if (state.items.length > (state.teamCount > 2 ? 5 : 4)) state.items.shift();
       }
 
-      function chooseItemType() {
+      function chooseItemAnchor(live, favored, comebackPlayer) {
+        const nearComeback = comebackPlayer && Math.random() < 0.3;
+        const favoredNeedsHelp = favored && (favored.lives <= Math.max(...live.map((player) => player.lives)) || isFinalTen());
+        const favoredChance = state.teamCount > 2 && favored ? (favoredNeedsHelp ? 0.46 : 0.34) : favored ? 0.28 : 0;
+        const nearFavored = !nearComeback && favored && Math.random() < favoredChance;
+        if (nearComeback) return { player: comebackPlayer, role: "comeback" };
+        if (nearFavored) return { player: favored, role: "favored" };
+        return { player: null, role: "" };
+      }
+
+      function chooseItemType(anchorRole = "", anchorPlayer = null) {
         const comebackPlayer = activePlayers().find((player) => player.comeback > 0);
         const roll = Math.random();
+        if (anchorRole === "favored") {
+          if (isFinalTen()) {
+            if (roll < 0.56) return "saw";
+            if (roll < 0.78) return "boost";
+            if (roll < 0.94) return "shield";
+            return "saw";
+          }
+          const canHeal = anchorPlayer && anchorPlayer.lives < MAX_LIVES;
+          if (canHeal && roll < 0.18) return "heart";
+          if (roll < 0.4) return "shield";
+          if (roll < 0.7) return "saw";
+          return "boost";
+        }
+        if (anchorRole === "comeback") {
+          if (isFinalTen()) {
+            if (roll < 0.48) return "saw";
+            if (roll < 0.76) return "boost";
+            if (roll < 0.92) return "shield";
+            return "yellowCard";
+          }
+          if (anchorPlayer && anchorPlayer.lives < MAX_LIVES && roll < 0.22) return "heart";
+          if (roll < 0.48) return "shield";
+          if (roll < 0.76) return "saw";
+          return "boost";
+        }
         if (isFinalTen()) {
           if (state.teamCount > 2) {
             if (roll < 0.5) return "saw";
@@ -1689,9 +1737,10 @@
       }
 
       function activateSecondYellow(offender) {
-        const attackers = armRivalsForPenalty(offender, 2.5);
+        const duration = preferredPenaltyDuration(offender, 2.5);
+        const attackers = armRivalsForPenalty(offender, duration);
         if (!attackers.length) return;
-        offender.frozen = 2.5;
+        offender.frozen = duration;
         offender.vx = 0;
         offender.vy = 0;
         state.announcement = {
@@ -1712,10 +1761,11 @@
       }
 
       function activateRedCard(offender) {
-        const attackers = armRivalsForPenalty(offender, state.redDuration);
+        const duration = preferredPenaltyDuration(offender, state.redDuration);
+        const attackers = armRivalsForPenalty(offender, duration);
         if (!attackers.length) return;
-        offender.redMark = state.redDuration;
-        offender.frozen = state.redDuration;
+        offender.redMark = duration;
+        offender.frozen = duration;
         offender.vx = 0;
         offender.vy = 0;
         state.announcement = {
@@ -1726,6 +1776,10 @@
         };
         addSparks(offender.x, offender.y, ["#ff1748", "#ffffff", "#ffd75f"], 42, 290);
         if (state.crowdAudio) state.audio.crowd();
+      }
+
+      function preferredPenaltyDuration(player, duration) {
+        return player.preferred && state.teamCount > 2 ? duration * 0.78 : duration;
       }
 
       function armRivalsForPenalty(offender, duration) {
