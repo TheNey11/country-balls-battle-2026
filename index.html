@@ -1503,9 +1503,22 @@
         const winner = chooseLikelyWinner(live);
         const loser = live.filter((p) => p !== winner && !areAllies(p, winner)).sort((a, b) => a.lives - b.lives || a.r - b.r)[0];
         if (!loser) return;
-        loser.lives = 1;
-        loser.r = radiusForLives(loser.lives);
-        hitPlayer(loser, winner, "assault");
+        winner.saw = Math.max(winner.saw, 2.2);
+        winner.assault = Math.max(winner.assault, 1.8);
+        winner.boost = Math.max(winner.boost, 1.8);
+        loser.frozen = Math.max(loser.frozen, 0.8);
+        spawnUrgentWeaponNear(winner);
+      }
+
+      function spawnUrgentWeaponNear(player) {
+        if (!player || state.items.length > 7) return;
+        state.items.push({
+          type: "saw",
+          x: clamp(player.x + random(-60, 60), FIELD.x + 48, FIELD.x + FIELD.w - 48),
+          y: clamp(player.y + random(-68, 68), FIELD.y + 58, FIELD.y + FIELD.h - 58),
+          r: ITEM_SIZE * 1.42,
+          t: 0
+        });
       }
 
       function chooseLikelyWinner(players = activePlayers()) {
@@ -1655,29 +1668,57 @@
           state.audio.bump();
         }
 
-        if (a.saw > 0 && a.hitCd <= 0) {
-          hitPlayer(b, a, "saw");
-          a.saw = 0;
-          a.hitCd = 0.55;
-        } else if (b.saw > 0 && b.hitCd <= 0) {
-          hitPlayer(a, b, "saw");
-          b.saw = 0;
-          b.hitCd = 0.55;
-        } else if (a.assault > 0 && b.frozen > 0 && a.assaultHitCd <= 0) {
-          hitPlayer(b, a, "assault");
-          a.assaultHitCd = 0.42;
-        } else if (b.assault > 0 && a.frozen > 0 && b.assaultHitCd <= 0) {
-          hitPlayer(a, b, "assault");
-          b.assaultHitCd = 0.42;
-        }
+        resolveWeaponCollision(a, b);
       }
 
       function areAllies(a, b) {
         return state.teamMode && a.squadId === b.squadId;
       }
 
-      function hitPlayer(target, attacker, type) {
-        if (target.eliminated || attacker.eliminated) return;
+      function resolveWeaponCollision(a, b) {
+        const aSawReady = a.saw > 0 && a.hitCd <= 0;
+        const bSawReady = b.saw > 0 && b.hitCd <= 0;
+        const aAssaultReady = !aSawReady && a.assault > 0 && b.frozen > 0 && a.assaultHitCd <= 0;
+        const bAssaultReady = !bSawReady && b.assault > 0 && a.frozen > 0 && b.assaultHitCd <= 0;
+        const fallbackWinner = scorePlayer(a) >= scorePlayer(b) ? a : b;
+
+        if (aSawReady) {
+          hitPlayer(b, a, "saw", { simultaneous: bSawReady, deferFinish: bSawReady });
+          a.saw = 0;
+          a.hitCd = 0.55;
+        }
+        if (bSawReady) {
+          hitPlayer(a, b, "saw", { simultaneous: aSawReady, deferFinish: aSawReady });
+          b.saw = 0;
+          b.hitCd = 0.55;
+        }
+        if (aSawReady || bSawReady) {
+          if (aSawReady && bSawReady) finishAfterDeferredHits(fallbackWinner);
+          return;
+        }
+
+        if (aAssaultReady) {
+          hitPlayer(b, a, "assault");
+          a.assaultHitCd = 0.42;
+        }
+        if (bAssaultReady) {
+          hitPlayer(a, b, "assault");
+          b.assaultHitCd = 0.42;
+        }
+      }
+
+      function finishAfterDeferredHits(fallbackWinner) {
+        if (state.mode !== "playing") return;
+        const live = activePlayers();
+        if (!live.length) {
+          finish(fallbackWinner);
+          return;
+        }
+        checkEliminationWinner();
+      }
+
+      function hitPlayer(target, attacker, type, options = {}) {
+        if (target.eliminated || (attacker.eliminated && !options.simultaneous)) return;
         if (target.shield > 0) {
           target.shield = 0;
           addCrystalBurst(target.x, target.y);
@@ -1704,7 +1745,7 @@
         addBlood(target.x, target.y, type === "assault" ? 42 : 36);
         state.audio.thunk();
         state.audio.crowd();
-        if (target.lives <= 0) eliminatePlayer(target, attacker);
+        if (target.lives <= 0) eliminatePlayer(target, attacker, options);
       }
 
       function shouldPreservePreferred(target) {
@@ -1714,7 +1755,7 @@
         return live.some((player) => player.squadId !== target.squadId);
       }
 
-      function eliminatePlayer(target, attacker) {
+      function eliminatePlayer(target, attacker, options = {}) {
         if (target.eliminated) return;
         target.eliminated = true;
         if (!state.eliminationOrder.includes(target)) state.eliminationOrder.push(target);
@@ -1726,6 +1767,7 @@
         state.tensionPulse = Math.max(state.tensionPulse, 1.4);
         addSparks(target.x, target.y, target.team.colors.concat(["#ffffff", "#ff1748"]), 70, 430);
         if (state.crowdAudio) state.audio.crowd();
+        if (options.deferFinish) return;
         const winner = currentBattleWinner(attacker);
         if (winner) finish(winner);
       }
@@ -2055,7 +2097,6 @@
           rival.assault = 0;
           rival.frozen = 0;
           if (!state.eliminationOrder.includes(rival)) state.eliminationOrder.push(rival);
-          addSparks(rival.x, rival.y, rival.team.colors.concat(["#ffffff", "#ff1748"]), 58, 390);
         });
         preferred.eliminated = false;
         preferred.lives = Math.max(1, preferred.lives);
