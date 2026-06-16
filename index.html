@@ -354,6 +354,7 @@
             <select id="matchMode">
               <option value="duel" selected>1 vs 1</option>
               <option value="free4">4 bolas</option>
+              <option value="free8">8 bolas</option>
               <option value="team2v2">2 vs 2</option>
               <option value="team4v4">4 vs 4</option>
             </select>
@@ -539,6 +540,7 @@
       const modeConfigs = {
         duel: { label: "1 vs 1", count: 2, squadSize: 1, teamMode: false },
         free4: { label: "4 bolas", count: 4, squadSize: 1, teamMode: false },
+        free8: { label: "8 bolas", count: 8, squadSize: 1, teamMode: false },
         team2v2: { label: "2 vs 2", count: 4, squadSize: 2, teamMode: true },
         team4v4: { label: "4 vs 4", count: 8, squadSize: 4, teamMode: true }
       };
