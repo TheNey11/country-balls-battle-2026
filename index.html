@@ -448,6 +448,16 @@
             </select>
           </label>
           <label>
+            Video
+            <select id="videoFormat">
+              <option value="mp4" selected>MP4 HD</option>
+              <option value="hevc">HEVC HD</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="grid">
+          <label>
             Roja
             <select id="redDuration">
               <option value="2.5">2.5 S</option>
@@ -475,7 +485,7 @@
 
       <div id="videoControls" class="game-controls video-controls" hidden>
         <button id="downloadVideoBtn" type="button" disabled>Preparando MP4</button>
-        <button id="downloadHevcVideoBtn" type="button" disabled>HEVC desactivado</button>
+        <button id="downloadHevcVideoBtn" type="button" disabled>Elige HEVC</button>
         <button id="endMenuBtn" type="button">Menu</button>
         <button id="againBtn" class="primary" type="button">Revancha</button>
       </div>
@@ -509,6 +519,7 @@
       const speedValue = document.getElementById("speedValue");
       const themeSelect = document.getElementById("theme");
       const winnerBiasSelect = document.getElementById("winnerBias");
+      const videoFormatSelect = document.getElementById("videoFormat");
       const redDurationSelect = document.getElementById("redDuration");
       const crowdAudioSelect = document.getElementById("crowdAudio");
       const bgFile = document.getElementById("bgFile");
@@ -641,6 +652,7 @@
         themeIndex: 0,
         backgroundImage: null,
         preferredWinner: "",
+        videoFormat: "mp4",
         redDuration: 3,
         crowdAudio: true,
         announcement: null,
@@ -664,6 +676,8 @@
           hevcUrl: "",
           mime: "",
           hevcMime: "",
+          format: "mp4",
+          requestedFormat: "mp4",
           active: false,
           hevcActive: false,
           supported: false,
@@ -1077,6 +1091,7 @@
         state.duration = Number(durationSelect.value);
         state.speed = Number(speedInput.value);
         state.preferredWinner = winnerBiasSelect.value;
+        state.videoFormat = videoFormatSelect.value;
         state.redDuration = Number(redDurationSelect.value);
         state.crowdAudio = crowdAudioSelect.value === "on";
         state.announcement = null;
@@ -1244,13 +1259,22 @@
         recorderState.hevcChunks = [];
         recorderState.mediaRecorder = null;
         recorderState.hevcRecorder = null;
+        recorderState.mime = "";
+        recorderState.hevcMime = "";
+        recorderState.format = state.videoFormat === "hevc" ? "hevc" : "mp4";
+        recorderState.requestedFormat = recorderState.format;
         recorderState.active = false;
         recorderState.hevcActive = false;
         videoControls.hidden = true;
         downloadVideoBtn.disabled = true;
         downloadHevcVideoBtn.disabled = true;
-        downloadVideoBtn.textContent = "Grabando MP4";
-        downloadHevcVideoBtn.textContent = "HEVC desactivado";
+        if (recorderState.requestedFormat === "hevc") {
+          downloadVideoBtn.textContent = "MP4 no grabado";
+          downloadHevcVideoBtn.textContent = "Grabando HEVC";
+        } else {
+          downloadVideoBtn.textContent = "Grabando MP4";
+          downloadHevcVideoBtn.textContent = "Elige HEVC";
+        }
       }
 
       function startMatchRecording() {
@@ -1274,17 +1298,31 @@
         const audioTracks = state.audio.recorderDest ? state.audio.recorderDest.stream.getAudioTracks() : [];
         audioTracks.forEach((track) => videoStream.addTrack(track));
         recorderState.stream = videoStream;
-        const mime = pickRecorderMime("mp4");
+        const requestedFormat = state.videoFormat === "hevc" ? "hevc" : "mp4";
+        let actualFormat = requestedFormat;
+        let mime = pickRecorderMime(requestedFormat);
+        recorderState.requestedFormat = requestedFormat;
+        recorderState.hevcSupported = !!pickRecorderMime("hevc");
+        if (requestedFormat === "hevc" && !mime) {
+          actualFormat = "mp4";
+          mime = pickRecorderMime("mp4");
+        }
+        recorderState.format = actualFormat;
+        const bitrate = actualFormat === "hevc" ? Math.round(profile.bitrate * 1.08) : profile.bitrate;
         try {
-          recorderState.mediaRecorder = new MediaRecorder(videoStream, mime ? { mimeType: mime, videoBitsPerSecond: profile.bitrate } : { videoBitsPerSecond: profile.bitrate });
+          recorderState.mediaRecorder = new MediaRecorder(videoStream, mime ? { mimeType: mime, videoBitsPerSecond: bitrate } : { videoBitsPerSecond: bitrate });
         } catch (error) {
           recorderState.supported = false;
           downloadVideoBtn.textContent = "Video no soportado";
+          downloadHevcVideoBtn.textContent = requestedFormat === "hevc" ? "HEVC no soportado" : "Elige HEVC";
+          stopRecorderStream();
           return;
         }
         const sessionId = recorderState.sessionId;
         recorderState.mime = recorderState.mediaRecorder.mimeType || mime || "video/webm";
+        recorderState.hevcMime = actualFormat === "hevc" ? recorderState.mime : "";
         recorderState.chunks = [];
+        recorderState.hevcChunks = [];
         recorderState.active = true;
         recorderState.mediaRecorder.ondataavailable = (event) => {
           if (sessionId !== recorderState.sessionId) return;
@@ -1298,20 +1336,41 @@
           stopRecorderStream();
           if (!recorderState.chunks.length) {
             downloadVideoBtn.textContent = "Sin video";
+            downloadHevcVideoBtn.textContent = actualFormat === "hevc" ? "Sin HEVC" : (requestedFormat === "hevc" ? "HEVC no soportado" : "Elige HEVC");
             videoControls.hidden = false;
             return;
           }
           const blob = new Blob(recorderState.chunks, { type: recorderState.mime });
           recorderState.url = URL.createObjectURL(blob);
-          downloadVideoBtn.disabled = false;
-          downloadVideoBtn.textContent = recorderState.mime.includes("mp4") ? "Descargar MP4 HD" : "Descargar video HD";
+          if (actualFormat === "hevc") {
+            recorderState.hevcUrl = recorderState.url;
+            recorderState.hevcMime = recorderState.mime;
+            downloadVideoBtn.disabled = true;
+            downloadVideoBtn.textContent = "MP4 no grabado";
+            downloadHevcVideoBtn.disabled = false;
+            downloadHevcVideoBtn.textContent = "Descargar HEVC HD";
+          } else {
+            recorderState.hevcUrl = "";
+            recorderState.hevcMime = "";
+            downloadVideoBtn.disabled = false;
+            downloadVideoBtn.textContent = recorderState.mime.includes("mp4") ? "Descargar MP4 HD" : "Descargar video HD";
+            downloadHevcVideoBtn.disabled = true;
+            downloadHevcVideoBtn.textContent = requestedFormat === "hevc" ? "HEVC no soportado" : "Elige HEVC en menu";
+          }
           videoControls.hidden = false;
         };
         recorderState.mediaRecorder.start(profile.timeslice);
-
-        recorderState.hevcSupported = false;
-        downloadHevcVideoBtn.disabled = true;
-        downloadHevcVideoBtn.textContent = "HEVC desactivado";
+        if (actualFormat === "hevc") {
+          downloadVideoBtn.disabled = true;
+          downloadVideoBtn.textContent = "MP4 no grabado";
+          downloadHevcVideoBtn.disabled = true;
+          downloadHevcVideoBtn.textContent = "Grabando HEVC";
+        } else {
+          downloadVideoBtn.disabled = true;
+          downloadVideoBtn.textContent = "Grabando MP4";
+          downloadHevcVideoBtn.disabled = true;
+          downloadHevcVideoBtn.textContent = requestedFormat === "hevc" ? "HEVC no soportado" : "Elige HEVC en menu";
+        }
       }
 
       function stopMatchRecording(expectedSessionId = state.recorder.sessionId) {
@@ -1320,17 +1379,24 @@
         if (recorder && state.recorder.active && recorder.state !== "inactive") {
           videoControls.hidden = false;
           downloadVideoBtn.disabled = true;
-          downloadVideoBtn.textContent = "Procesando video";
+          downloadHevcVideoBtn.disabled = true;
+          if (state.recorder.format === "hevc") {
+            downloadVideoBtn.textContent = "MP4 no grabado";
+            downloadHevcVideoBtn.textContent = "Procesando HEVC";
+          } else {
+            downloadVideoBtn.textContent = "Procesando MP4";
+            downloadHevcVideoBtn.textContent = state.recorder.requestedFormat === "hevc" ? "HEVC no soportado" : "Elige HEVC en menu";
+          }
           try { recorder.requestData(); } catch (error) {}
           try { recorder.stop(); } catch (error) {}
         } else if (!state.recorder.supported) {
           videoControls.hidden = false;
           downloadVideoBtn.disabled = true;
           downloadVideoBtn.textContent = "Video no soportado";
+          downloadHevcVideoBtn.disabled = true;
+          downloadHevcVideoBtn.textContent = "HEVC no soportado";
         }
         videoControls.hidden = false;
-        downloadHevcVideoBtn.disabled = true;
-        downloadHevcVideoBtn.textContent = "HEVC desactivado";
       }
 
       function copyFrameToRecorder() {
@@ -1358,7 +1424,6 @@
 
       function pickRecorderMime(format = "mp4") {
         if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return "";
-        if (format === "hevc") return "";
         const options = format === "hevc"
           ? [
               "video/mp4;codecs=hvc1.1.6.L123.B0,mp4a.40.2",
