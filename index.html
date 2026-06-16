@@ -649,6 +649,7 @@
         lastDamageAt: 0,
         eliminationOrder: [],
         finalRanking: [],
+        draw: false,
         recorder: {
           canvas: null,
           ctx: null,
@@ -1092,6 +1093,7 @@
         state.lastDamageAt = 0;
         state.eliminationOrder = [];
         state.finalRanking = [];
+        state.draw = false;
         state.winner = null;
         state.mode = "playing";
         state.players = makePlayers(selected);
@@ -1443,7 +1445,7 @@
             }
           });
         }
-        if (remaining <= 0.85 && !state.finalBlow && live.length > 1) {
+        if (remaining <= 0.85 && !state.finalBlow && live.length > 1 && !shouldHoldTieToTimer()) {
           state.finalBlow = true;
           forceFinalBlow();
         }
@@ -1668,8 +1670,20 @@
         if (state.mode !== "playing") return;
         const live = activePlayers();
         if (!live.length) {
+          const tie = getLifeTieResult();
+          if (tie) {
+            finishDraw(tie);
+            return;
+          }
           finish(fallbackWinner);
           return;
+        }
+        if (state.teamMode && activeSquads().length === 0) {
+          const tie = getLifeTieResult();
+          if (tie) {
+            finishDraw(tie);
+            return;
+          }
         }
         checkEliminationWinner();
       }
@@ -2036,8 +2050,43 @@
       }
 
       function finishByTimer() {
+        const tie = getLifeTieResult();
+        if (tie) {
+          finishDraw(tie);
+          return;
+        }
         const resolved = resolveChosenWinnerBeforeFinish() || chooseLikelyWinner(activePlayers());
         finish(resolved);
+      }
+
+      function shouldHoldTieToTimer() {
+        return !!getLifeTieResult();
+      }
+
+      function getLifeTieResult() {
+        if (state.matchMode === "duel") {
+          const players = state.players.slice(0, 2);
+          if (players.length === 2 && Math.max(0, players[0].lives) === Math.max(0, players[1].lives)) {
+            return { label: "EMPATE", detail: `${Math.max(0, players[0].lives)} - ${Math.max(0, players[1].lives)}` };
+          }
+        }
+        if (state.matchMode === "team2v2") {
+          const teamLives = squadLifeTotals();
+          if (teamLives.length === 2 && teamLives[0].lives === teamLives[1].lives) {
+            return { label: "EMPATE", detail: `${teamLives[0].lives} - ${teamLives[1].lives}` };
+          }
+        }
+        return null;
+      }
+
+      function squadLifeTotals() {
+        const totals = new Map();
+        state.players.forEach((player) => {
+          const key = player.squadId;
+          if (!totals.has(key)) totals.set(key, { squadId: key, lives: 0 });
+          totals.get(key).lives += player.eliminated ? 0 : Math.max(0, player.lives);
+        });
+        return Array.from(totals.values()).sort((a, b) => a.squadId - b.squadId);
       }
 
       function resolveChosenWinnerBeforeFinish() {
@@ -2068,6 +2117,7 @@
         state.finalRanking = buildFinalRanking(winner);
         state.mode = "over";
         state.winner = winner;
+        state.draw = false;
         winnerText.textContent = `${winner.team.name} gana`;
         endPanel.hidden = true;
         gameControls.hidden = true;
@@ -2075,6 +2125,29 @@
         state.audio.stopAmbience();
         state.audio.whistle();
         spawnConfetti(winner, 180);
+        const sessionId = state.recorder.sessionId;
+        state.recorder.stopTimer = setTimeout(() => stopMatchRecording(sessionId), 1900);
+      }
+
+      function finishDraw(tie) {
+        if (state.mode === "over") return;
+        state.mode = "over";
+        state.winner = null;
+        state.draw = true;
+        state.finalRanking = [];
+        winnerText.textContent = "Empate";
+        endPanel.hidden = true;
+        gameControls.hidden = true;
+        videoControls.hidden = true;
+        state.audio.stopAmbience();
+        state.audio.whistle();
+        state.announcement = {
+          text: tie && tie.detail ? `EMPATE ${tie.detail}` : "EMPATE",
+          color: "#88ffe4",
+          life: 1.2,
+          maxLife: 1.2
+        };
+        spawnConfetti(null, 120);
         const sessionId = state.recorder.sessionId;
         state.recorder.stopTimer = setTimeout(() => stopMatchRecording(sessionId), 1900);
       }
@@ -3259,7 +3332,12 @@
       }
 
       function drawWinnerBanner(time) {
-        if (state.mode !== "over" || !state.winner) return;
+        if (state.mode !== "over") return;
+        if (state.draw) {
+          drawDrawBanner(time);
+          return;
+        }
+        if (!state.winner) return;
         if (state.teamCount > 2) {
           drawRankingBanner(time);
           return;
@@ -3309,6 +3387,49 @@
         ctx.fillStyle = "#88ffe4";
         ctx.shadowBlur = 12;
         ctx.fillText("COUNTRY BALLS BATTLE 2026", SAFE.x + SAFE.w / 2, y + 95);
+        ctx.restore();
+      }
+
+      function drawDrawBanner(time) {
+        const pulse = (Math.sin(time * 5.8) + 1) / 2;
+        const x = SAFE.x + 20;
+        const y = SAFE.y + SAFE.h * 0.39;
+        const w = SAFE.w - 40;
+        const h = 112;
+        ctx.save();
+        ctx.shadowColor = "#88ffe4";
+        ctx.shadowBlur = 24 + pulse * 16;
+        roundRect(x, y, w, h, 16);
+        const bg = ctx.createLinearGradient(x, y, x + w, y + h);
+        bg.addColorStop(0, "rgba(3, 18, 24, 0.94)");
+        bg.addColorStop(0.5, "rgba(8, 38, 49, 0.94)");
+        bg.addColorStop(1, "rgba(10, 14, 30, 0.94)");
+        ctx.fillStyle = bg;
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = `rgba(136, 255, 228, ${0.72 + pulse * 0.22})`;
+        ctx.stroke();
+
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = "rgba(0,0,0,0.74)";
+        ctx.shadowBlur = 18 + pulse * 10;
+        ctx.shadowColor = "#88ffe4";
+        ctx.font = "900 20px Orbitron, Share Tech Mono, monospace";
+        ctx.fillStyle = "#d7fff8";
+        ctx.strokeText("MATCH RESULT", SAFE.x + SAFE.w / 2, y + 28);
+        ctx.fillText("MATCH RESULT", SAFE.x + SAFE.w / 2, y + 28);
+
+        ctx.font = "900 42px Orbitron, Share Tech Mono, monospace";
+        ctx.fillStyle = "#ffffff";
+        ctx.strokeText("EMPATE", SAFE.x + SAFE.w / 2, y + 68);
+        ctx.fillText("EMPATE", SAFE.x + SAFE.w / 2, y + 68);
+
+        ctx.font = "900 13px Orbitron, Share Tech Mono, monospace";
+        ctx.fillStyle = "#88ffe4";
+        ctx.shadowBlur = 10;
+        ctx.fillText("COUNTRY BALLS BATTLE 2026", SAFE.x + SAFE.w / 2, y + 96);
         ctx.restore();
       }
 
