@@ -474,7 +474,7 @@
 
       <div id="videoControls" class="game-controls video-controls" hidden>
         <button id="downloadVideoBtn" type="button" disabled>Preparando MP4</button>
-        <button id="downloadHevcVideoBtn" type="button" disabled>Preparando HEVC</button>
+        <button id="downloadHevcVideoBtn" type="button" disabled>HEVC desactivado</button>
         <button id="endMenuBtn" type="button">Menu</button>
         <button id="againBtn" class="primary" type="button">Revancha</button>
       </div>
@@ -1246,7 +1246,7 @@
         downloadVideoBtn.disabled = true;
         downloadHevcVideoBtn.disabled = true;
         downloadVideoBtn.textContent = "Grabando MP4";
-        downloadHevcVideoBtn.textContent = "Grabando HEVC";
+        downloadHevcVideoBtn.textContent = "HEVC desactivado";
       }
 
       function startMatchRecording() {
@@ -1305,44 +1305,9 @@
         };
         recorderState.mediaRecorder.start(profile.timeslice);
 
-        const hevcMime = pickRecorderMime("hevc");
-        recorderState.hevcSupported = !!hevcMime;
-        if (!hevcMime) {
-          downloadHevcVideoBtn.disabled = true;
-          downloadHevcVideoBtn.textContent = "HEVC no soportado";
-          return;
-        }
-        try {
-          recorderState.hevcRecorder = new MediaRecorder(videoStream, { mimeType: hevcMime, videoBitsPerSecond: Math.round(profile.bitrate * 1.18) });
-        } catch (error) {
-          recorderState.hevcSupported = false;
-          downloadHevcVideoBtn.disabled = true;
-          downloadHevcVideoBtn.textContent = "HEVC no soportado";
-          return;
-        }
-        recorderState.hevcMime = recorderState.hevcRecorder.mimeType || hevcMime;
-        recorderState.hevcChunks = [];
-        recorderState.hevcActive = true;
-        recorderState.hevcRecorder.ondataavailable = (event) => {
-          if (sessionId !== recorderState.sessionId) return;
-          if (event.data && event.data.size) recorderState.hevcChunks.push(event.data);
-        };
-        recorderState.hevcRecorder.onstop = () => {
-          if (sessionId !== recorderState.sessionId) return;
-          recorderState.hevcActive = false;
-          recorderState.hevcRecorder = null;
-          if (!recorderState.hevcChunks.length) {
-            downloadHevcVideoBtn.textContent = "HEVC sin video";
-            videoControls.hidden = false;
-            return;
-          }
-          const blob = new Blob(recorderState.hevcChunks, { type: recorderState.hevcMime });
-          recorderState.hevcUrl = URL.createObjectURL(blob);
-          downloadHevcVideoBtn.disabled = false;
-          downloadHevcVideoBtn.textContent = "Descargar HEVC HD";
-          videoControls.hidden = false;
-        };
-        recorderState.hevcRecorder.start(profile.timeslice);
+        recorderState.hevcSupported = false;
+        downloadHevcVideoBtn.disabled = true;
+        downloadHevcVideoBtn.textContent = "HEVC desactivado";
       }
 
       function stopMatchRecording(expectedSessionId = state.recorder.sessionId) {
@@ -1359,18 +1324,9 @@
           downloadVideoBtn.disabled = true;
           downloadVideoBtn.textContent = "Video no soportado";
         }
-        const hevcRecorder = state.recorder.hevcRecorder;
-        if (hevcRecorder && state.recorder.hevcActive && hevcRecorder.state !== "inactive") {
-          videoControls.hidden = false;
-          downloadHevcVideoBtn.disabled = true;
-          downloadHevcVideoBtn.textContent = "Procesando HEVC";
-          try { hevcRecorder.requestData(); } catch (error) {}
-          try { hevcRecorder.stop(); } catch (error) {}
-        } else if (!state.recorder.hevcSupported) {
-          videoControls.hidden = false;
-          downloadHevcVideoBtn.disabled = true;
-          downloadHevcVideoBtn.textContent = "HEVC no soportado";
-        }
+        videoControls.hidden = false;
+        downloadHevcVideoBtn.disabled = true;
+        downloadHevcVideoBtn.textContent = "HEVC desactivado";
       }
 
       function copyFrameToRecorder() {
@@ -1398,6 +1354,7 @@
 
       function pickRecorderMime(format = "mp4") {
         if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return "";
+        if (format === "hevc") return "";
         const options = format === "hevc"
           ? [
               "video/mp4;codecs=hvc1.1.6.L123.B0,mp4a.40.2",
