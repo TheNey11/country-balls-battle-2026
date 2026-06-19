@@ -84,8 +84,11 @@
       align-content: start;
       gap: 6px;
       padding: 10px;
-      max-height: 750px;
-      overflow: hidden;
+      max-height: 100%;
+      overflow-x: hidden;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(43, 214, 190, 0.75) rgba(4, 35, 38, 0.45);
       background:
         linear-gradient(rgba(31, 255, 208, 0.035) 1px, transparent 1px),
         linear-gradient(90deg, rgba(31, 255, 208, 0.035) 1px, transparent 1px),
@@ -96,6 +99,19 @@
       border: 1px solid rgba(72, 255, 219, 0.22);
       box-shadow: inset 0 0 36px rgba(24, 244, 204, 0.13), 0 0 34px rgba(0, 0, 0, 0.45);
       backdrop-filter: blur(12px);
+    }
+
+    .menu::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .menu::-webkit-scrollbar-track {
+      background: rgba(4, 35, 38, 0.45);
+    }
+
+    .menu::-webkit-scrollbar-thumb {
+      background: rgba(43, 214, 190, 0.75);
+      border-radius: 999px;
     }
 
     .menu::before,
@@ -125,10 +141,12 @@
     }
 
     .menu[hidden],
+    .menu [hidden],
+    .grid[hidden],
     .game-controls[hidden],
     .video-controls[hidden],
     .end-panel[hidden] {
-      display: none;
+      display: none !important;
     }
 
     h1 {
