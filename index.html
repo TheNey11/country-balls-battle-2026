@@ -373,8 +373,10 @@
               <option value="duel" selected>1 vs 1</option>
               <option value="free4">4 bolas</option>
               <option value="free8">8 bolas</option>
-              <option value="team2v2">2 vs 2 selecciones</option>
-              <option value="team4v4">4 vs 4 selecciones</option>
+              <option value="team2v2">2 vs 2 misma seleccion</option>
+              <option value="team2v2Mixed">2 vs 2 distintas</option>
+              <option value="team4v4">4 vs 4 misma seleccion</option>
+              <option value="team4v4Mixed">4 vs 4 distintas</option>
             </select>
           </label>
           <label>
@@ -570,8 +572,10 @@
         duel: { label: "1 vs 1", count: 2, selectCount: 2, squadSize: 1, teamMode: false },
         free4: { label: "4 bolas", count: 4, selectCount: 4, squadSize: 1, teamMode: false },
         free8: { label: "8 bolas", count: 8, selectCount: 8, squadSize: 1, teamMode: false },
-        team2v2: { label: "2 vs 2 selecciones", count: 4, selectCount: 2, squadSize: 2, teamMode: true },
-        team4v4: { label: "4 vs 4 selecciones", count: 8, selectCount: 2, squadSize: 4, teamMode: true }
+        team2v2: { label: "2 vs 2 misma seleccion", count: 4, selectCount: 2, squadSize: 2, teamMode: true, repeatSquads: true },
+        team2v2Mixed: { label: "2 vs 2 distintas", count: 4, selectCount: 4, squadSize: 2, teamMode: true, repeatSquads: false },
+        team4v4: { label: "4 vs 4 misma seleccion", count: 8, selectCount: 2, squadSize: 4, teamMode: true, repeatSquads: true },
+        team4v4Mixed: { label: "4 vs 4 distintas", count: 8, selectCount: 8, squadSize: 4, teamMode: true, repeatSquads: false }
       };
       const assets = {
         lifeBall: makeImage(LIFE_BALL_SRC),
@@ -1077,7 +1081,7 @@
 
       function selectedTeams() {
         const config = getModeConfig();
-        if (config.teamMode) {
+        if (config.repeatSquads) {
           const home = teamById(teamASelect.value);
           const away = teamById(teamBSelect.value);
           return [
@@ -1091,7 +1095,7 @@
 
       function winnerBiasTeams() {
         const config = getModeConfig();
-        if (config.teamMode) return [teamById(teamASelect.value), teamById(teamBSelect.value)];
+        if (config.repeatSquads) return [teamById(teamASelect.value), teamById(teamBSelect.value)];
         const unique = [];
         selectedTeams().forEach((team) => {
           if (!unique.some((item) => item.id === team.id)) unique.push(team);
@@ -1109,7 +1113,7 @@
 
       function hasInvalidTeamSelection(selected) {
         const config = getModeConfig();
-        if (config.teamMode) return teamASelect.value === teamBSelect.value;
+        if (config.repeatSquads) return teamASelect.value === teamBSelect.value;
         return hasDuplicateTeams(selected);
       }
 
@@ -2198,7 +2202,7 @@
             return { label: "EMPATE", detail: `${Math.max(0, players[0].lives)} - ${Math.max(0, players[1].lives)}` };
           }
         }
-        if (state.matchMode === "team2v2") {
+        if (state.teamMode && state.squadSize === 2) {
           const teamLives = squadLifeTotals();
           if (teamLives.length === 2 && teamLives[0].lives === teamLives[1].lives) {
             return { label: "EMPATE", detail: `${teamLives[0].lives} - ${teamLives[1].lives}` };
